@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+import sys
+import os
+import subprocess
+import threading
+import gi
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw, Gio, GLib
+
+class MuffinGUI(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Muffin")
+        self.set_default_size(500, 450)
+        
+        # Toast overlay for notifications
+        self.toast_overlay = Adw.ToastOverlay()
+        self.set_content(self.toast_overlay)
+        
+        # Main layout
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.toast_overlay.set_child(box)
+        
+        # Header bar
+        header = Adw.HeaderBar()
+        box.append(header)
+        
+        # Content
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        content_box.set_margin_top(32)
+        content_box.set_margin_bottom(32)
+        content_box.set_margin_start(32)
+        content_box.set_margin_end(32)
+        box.append(content_box)
+        
+        # Title
+        title_label = Gtk.Label(label="Muffin App Manager")
+        title_label.add_css_class("title-1")
+        content_box.append(title_label)
+        
+        # Actions Group
+        action_group = Adw.PreferencesGroup()
+        content_box.append(action_group)
+        
+        # Run App
+        row_run = Adw.ActionRow(title="Run App", subtitle="Launch an existing .mpa file")
+        btn_run = Gtk.Button(label="Run")
+        btn_run.set_valign(Gtk.Align.CENTER)
+        btn_run.add_css_class("suggested-action")
+        btn_run.connect("clicked", self.on_run_clicked)
+        row_run.add_suffix(btn_run)
+        action_group.add(row_run)
+        
+        # Make from URL
+        row_make_url = Adw.ActionRow(title="Create from URL", subtitle="Package a website into an app")
+        btn_make_url = Gtk.Button(label="Create")
+        btn_make_url.set_valign(Gtk.Align.CENTER)
+        btn_make_url.connect("clicked", self.on_make_url_clicked)
+        row_make_url.add_suffix(btn_make_url)
+        action_group.add(row_make_url)
+        
+        # Make from Folder
+        row_make_folder = Adw.ActionRow(title="Create from Folder", subtitle="Package a local folder into an app")
+        btn_make_folder = Gtk.Button(label="Create")
+        btn_make_folder.set_valign(Gtk.Align.CENTER)
+        btn_make_folder.connect("clicked", self.on_make_folder_clicked)
+        row_make_folder.add_suffix(btn_make_folder)
+        action_group.add(row_make_folder)
+        
+        # Delete App
+        row_delete = Adw.ActionRow(title="Delete App", subtitle="Remove an installed Muffin app")
+        btn_delete = Gtk.Button(label="Delete")
+        btn_delete.set_valign(Gtk.Align.CENTER)
+        btn_delete.add_css_class("destructive-action")
+        btn_delete.connect("clicked", self.on_delete_clicked)
+        row_delete.add_suffix(btn_delete)
+        action_group.add(row_delete)
+        
+    def get_script_path(self, script_name):
+        # The script is in 'app', so the parent is where the bash scripts are.
+        script_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        return os.path.join(script_dir, script_name)
+        
+    def on_run_clicked(self, btn):
+        dialog = Gtk.FileDialog(title="Select .mpa File")
+        f_filter = Gtk.FileFilter()
+        f_filter.set_name("Muffin Portable Archives")
+        f_filter.add_pattern("*.mpa")
+        
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(f_filter)
+        dialog.set_filters(filters)
+        
+        dialog.open(self, None, self.on_run_dialog_open, None)
+        
+    def on_run_dialog_open(self, dialog, result, data):
+        try:
+            file = dialog.open_finish(result)
+            if file:
+                path = file.get_path()
+                subprocess.Popen([self.get_script_path("muffin"), "run", path])
+        except GLib.Error:
+            pass
+
+    def on_make_url_clicked(self, btn):
+        dialog = Adw.MessageDialog(heading="Create from URL", parent=self)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("create", "Create")
+        dialog.set_response_appearance("create", Adw.ResponseAppearance.SUGGESTED)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        url_entry = Gtk.Entry(placeholder_text="https://example.com")
+        name_entry = Gtk.Entry(placeholder_text="App Name (optional)")
+        box.append(url_entry)
+        box.append(name_entry)
+        dialog.set_extra_child(box)
+        
+        dialog.connect("response", lambda d, r: self.on_make_url_response(r, url_entry.get_text(), name_entry.get_text()))
+        dialog.present()
+        
+    def on_make_url_response(self, response, url, name):
+        if response == "create" and url:
+            cmd = [self.get_script_path("muffin-make"), "url", url]
+            if name:
+                cmd.append(name)
+            self.run_command_async(cmd, "App created successfully!")
+            
+    def on_make_folder_clicked(self, btn):
+        dialog = Gtk.FileDialog(title="Select Folder")
+        dialog.select_folder(self, None, self.on_make_folder_dialog_open, None)
+        
+    def on_make_folder_dialog_open(self, dialog, result, data):
+        try:
+            folder = dialog.select_folder_finish(result)
+            if folder:
+                path = folder.get_path()
+                name_dialog = Adw.MessageDialog(heading="App Name", parent=self)
+                name_dialog.add_response("cancel", "Cancel")
+                name_dialog.add_response("create", "Create")
+                name_dialog.set_response_appearance("create", Adw.ResponseAppearance.SUGGESTED)
+                
+                name_entry = Gtk.Entry(placeholder_text="App Name (optional)")
+                name_dialog.set_extra_child(name_entry)
+                
+                name_dialog.connect("response", lambda d, r: self.on_make_folder_response(r, path, name_entry.get_text()))
+                name_dialog.present()
+        except GLib.Error:
+            pass
+
+    def on_make_folder_response(self, response, path, name):
+        if response == "create":
+            cmd = [self.get_script_path("muffin-make"), "folder", path]
+            if name:
+                cmd.append(name)
+            self.run_command_async(cmd, "App created successfully!")
+            
+    def on_delete_clicked(self, btn):
+        dialog = Adw.MessageDialog(heading="Delete App", parent=self)
+        dialog.set_body("Enter the path to the .mpa file or the app name to delete.")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        
+        entry = Gtk.Entry(placeholder_text="App name or path")
+        dialog.set_extra_child(entry)
+        
+        dialog.connect("response", lambda d, r: self.on_delete_response(r, entry.get_text()))
+        dialog.present()
+        
+    def on_delete_response(self, response, target):
+        if response == "delete" and target:
+            cmd = [self.get_script_path("muffin"), "delete", target]
+            self.run_command_async(cmd, "App deleted successfully!")
+            
+    def run_command_async(self, cmd, success_msg):
+        self.show_toast("Working...")
+        
+        def run():
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    GLib.idle_add(self.show_toast, success_msg)
+                else:
+                    error_msg = result.stderr.strip() or result.stdout.strip() or "An error occurred."
+                    GLib.idle_add(self.show_message, "Error", error_msg)
+            except Exception as e:
+                GLib.idle_add(self.show_message, "Error", str(e))
+                
+        thread = threading.Thread(target=run)
+        thread.daemon = True
+        thread.start()
+        
+    def show_toast(self, message):
+        toast = Adw.Toast.new(message)
+        self.toast_overlay.add_toast(toast)
+        
+    def show_message(self, title, message):
+        dialog = Adw.MessageDialog(heading=title, parent=self)
+        dialog.set_body(message)
+        dialog.add_response("ok", "OK")
+        dialog.present()
+
+
+class MuffinApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.muffin.GUI")
+        
+    def do_activate(self):
+        win = self.props.active_window
+        if not win:
+            win = MuffinGUI(self)
+        win.present()
+
+if __name__ == "__main__":
+    app = MuffinApp()
+    app.run(sys.argv)
