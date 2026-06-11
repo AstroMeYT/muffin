@@ -4,7 +4,7 @@ Website: [Open Website](https://sites.google.com/view/Muffin-Portable)
 
 Pre-built MPA Repo: [Open Repository](https://github.com/AstroMeYT/MPA-repo)
 
-Muffin is a lightweight, zero-dependency portable application runtime and packaging format for local web applications (`.mpa`).
+Muffin is a lightweight, one-dependency (zero if GUI isn't used) portable application runtime and packaging format for local web applications (`.mpa`).
 
 Instead of bundling a massive browser engine with every single app like Electron does, Muffin uses your system's existing native Webkit GTK engine. It packages any standard website or web application directory into a single portable ZIP archive (renamed to `.mpa`), handles automatic system application-menu integration (with custom icons), and respects system-wide dark/light mode configurations.
 
