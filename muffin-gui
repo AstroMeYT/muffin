@@ -8,17 +8,8 @@ import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-try:
-    gi.require_version('Vte', '3.91')
-except ValueError:
-    pass
 from gi.repository import Gtk, Adw, Gio, GLib
 
-try:
-    from gi.repository import Vte
-    HAS_VTE = True
-except ImportError:
-    HAS_VTE = False
 
 class MuffinGUI(Adw.ApplicationWindow):
     def __init__(self, app):
@@ -69,12 +60,6 @@ class MuffinGUI(Adw.ApplicationWindow):
         reload_btn.connect("clicked", lambda x: self.load_library())
         header.pack_end(reload_btn)
 
-        # Terminal toggle
-        if HAS_VTE:
-            self.terminal_toggle = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic")
-            self.terminal_toggle.connect("toggled", self.on_terminal_toggled)
-            header.pack_end(self.terminal_toggle)
-
         # Scrolled window for content
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
@@ -100,45 +85,8 @@ class MuffinGUI(Adw.ApplicationWindow):
         self.content_box.append(self.status_page)
         
         self.app_rows = []
-        
-        # Terminal Revealer
-        if HAS_VTE:
-            self.term_revealer = Gtk.Revealer()
-            self.term_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-            
-            term_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            # Add a separator
-            term_box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-            
-            self.terminal = Vte.Terminal()
-            self.terminal.set_vexpand(False)
-            self.terminal.set_size_request(-1, 200) # Give it some height
-            
-            # Scrolled window for terminal
-            term_scroll = Gtk.ScrolledWindow()
-            term_scroll.set_child(self.terminal)
-            term_scroll.set_size_request(-1, 200)
-            term_box.append(term_scroll)
-            
-            self.term_revealer.set_child(term_box)
-            box.append(self.term_revealer)
-            
-            self.current_success_msg = ""
-            self.terminal.connect("child-exited", self.on_terminal_child_exited)
-
         self.load_library()
         
-    def on_terminal_toggled(self, btn):
-        if HAS_VTE:
-            self.term_revealer.set_reveal_child(btn.get_active())
-            
-    def on_terminal_child_exited(self, terminal, status):
-        # status is the waitpid status
-        if status == 0:
-            self.show_toast_and_reload(self.current_success_msg)
-        else:
-            self.show_message("Command Failed", f"The command exited with status {status}")
-
     def get_script_path(self, script_name):
         # Prefer system path
         if shutil.which(script_name):
@@ -197,15 +145,17 @@ class MuffinGUI(Adw.ApplicationWindow):
 
     def create_run_callback(self, app_name):
         def callback(btn):
-            if HAS_VTE:
-                self.run_command_async([self.get_script_path("muffin"), "run", app_name], f"Started {app_name}...")
-            else:
-                subprocess.Popen([self.get_script_path("muffin"), "run", app_name])
+            cmd = [self.get_script_path("muffin"), "run", app_name]
+            try:
+                subprocess.Popen(cmd)
+                self.show_toast(f"Starting {app_name}...")
+            except Exception as e:
+                self.show_message("Error Starting App", f"Failed to execute command:\n{' '.join(cmd)}\n\nError: {e}")
         return callback
         
     def create_delete_callback(self, app_name):
         def callback(btn):
-            dialog = Adw.MessageDialog(heading=f"Delete {app_name}?", parent=self)
+            dialog = Adw.MessageDialog(heading=f"Delete {app_name}?", transient_for=self)
             dialog.set_body("This will remove the app from your library.")
             dialog.add_response("cancel", "Cancel")
             dialog.add_response("delete", "Delete")
@@ -253,7 +203,7 @@ class MuffinGUI(Adw.ApplicationWindow):
             pass
 
     def on_make_url_clicked(self, action, param):
-        dialog = Adw.MessageDialog(heading="Create from URL", parent=self)
+        dialog = Adw.MessageDialog(heading="Create from URL", transient_for=self)
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("create", "Create")
         dialog.set_response_appearance("create", Adw.ResponseAppearance.SUGGESTED)
@@ -288,7 +238,7 @@ class MuffinGUI(Adw.ApplicationWindow):
             folder = dialog.select_folder_finish(result)
             if folder:
                 path = folder.get_path()
-                name_dialog = Adw.MessageDialog(heading="App Name", parent=self)
+                name_dialog = Adw.MessageDialog(heading="App Name", transient_for=self)
                 name_dialog.add_response("cancel", "Cancel")
                 name_dialog.add_response("create", "Create")
                 name_dialog.set_response_appearance("create", Adw.ResponseAppearance.SUGGESTED)
@@ -313,52 +263,39 @@ class MuffinGUI(Adw.ApplicationWindow):
             self.run_command_async(cmd, "App created successfully!")
             
     def run_command_async(self, cmd, success_msg):
-        if HAS_VTE:
-            self.terminal_toggle.set_active(True)
-            self.current_success_msg = success_msg
-            self.terminal.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                None, # working dir
-                cmd, # argv
-                None, # envv
-                GLib.SpawnFlags.DEFAULT,
-                None, None, # child setup
-                -1, # timeout
-                None, # cancellable
-                None # callback
-            )
-        else:
-            self.show_toast("Working...")
-            
-            def run():
-                try:
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    if result.returncode == 0:
-                        GLib.idle_add(self.show_toast_and_reload, success_msg)
-                    else:
-                        error_msg = result.stderr.strip() or result.stdout.strip() or "An error occurred."
-                        GLib.idle_add(self.show_message, "Error", error_msg)
-                except Exception as e:
-                    GLib.idle_add(self.show_message, "Error", str(e))
-                    
-            thread = threading.Thread(target=run)
-            thread.daemon = True
-            thread.start()
+        self.show_toast("Working...")
+        
+        def run():
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    GLib.idle_add(self.show_toast_and_reload, success_msg)
+                else:
+                    error_msg = result.stderr.strip() or result.stdout.strip() or "An error occurred."
+                    GLib.idle_add(self.show_message, "Command Failed", error_msg)
+            except Exception as e:
+                GLib.idle_add(self.show_message, "Execution Error", f"Command: {' '.join(cmd)}\n\nError: {e}")
+                
+        thread = threading.Thread(target=run)
+        thread.daemon = True
+        thread.start()
         
     def show_toast_and_reload(self, message):
         self.show_toast(message)
         self.load_library()
+        return False
         
     def show_toast(self, message):
         toast = Adw.Toast.new(message)
         self.toast_overlay.add_toast(toast)
         
     def show_message(self, title, message):
-        dialog = Adw.MessageDialog(heading=title, parent=self)
+        dialog = Adw.MessageDialog(heading=title, transient_for=self)
         dialog.set_body(message)
         dialog.add_response("ok", "OK")
         dialog.connect("response", lambda d, r: d.close())
         dialog.present()
+        return False
 
 
 class MuffinApp(Adw.Application):
