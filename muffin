@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# Copyright (c) 2026 Gatlin Nicholson
+#
+# This software is released under the MIT License.
+# https://opensource.org
+
 # Muffin - Portable Web App Runner & Installer
 # Usage: 
 #   muffin run <path/to/app.mpa_or_app_name>
