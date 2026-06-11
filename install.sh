@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# Copyright (c) 2026 Gatlin Nicholson
+#
+# This software is released under the MIT License.
+# https://opensource.org
+
 # Muffin Environment Installer
 # Designed to install 'muffin' and 'muffin-make' into ~/bin and configure $PATH.
 
