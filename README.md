@@ -92,7 +92,7 @@ For Muffin to parse and run your custom application correctly, ensure your archi
 ```text
 your-app.mpa (ZIP Archive)
 ├── index.html       <-- The main application entrypoint (required)
-├── icon.png         <-- Application menu icon (optional, recommended)
+├── favicon.png         <-- Application menu icon (optional, recommended)
 ├── styles.css       <-- Local stylesheet
 ├── app.js           <-- Local JavaScript functionality
 └── assets/          <-- Local images, fonts, or media assets
