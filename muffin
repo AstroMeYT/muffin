@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2026 Gatlin Nicholson
-#
-# This software is released under the MIT License.
-# https://opensource.org
-
 # Muffin - Portable Web App Runner & Installer
 # Usage: 
 #   muffin run <path/to/app.mpa_or_app_name>
@@ -83,7 +78,6 @@ if [ "$COMMAND" = "delete" ]; then
     echo "Uninstalling Muffin App: $APP_NAME"
     
     DESKTOP_FILE="$HOME/.local/share/applications/muffin-$APP_NAME.desktop"
-    SYSTEM_ICON_DEST="$HOME/.local/share/icons/muffin-$APP_NAME.png"
     APP_DIR="$HOME/.local/share/muffin/apps/$APP_NAME"
     LIBRARY_MPA="$MUFFIN_LIB/${APP_NAME}.mpa"
     
@@ -96,12 +90,15 @@ if [ "$COMMAND" = "delete" ]; then
         deleted_any=true
     fi
 
-    # Remove the system menu icon
-    if [ -f "$SYSTEM_ICON_DEST" ]; then
-        rm -f "$SYSTEM_ICON_DEST"
-        echo "  - Removed application icon."
-        deleted_any=true
-    fi
+    # Remove any registered system menu icons matching this app (handles various extensions)
+    for ext in png svg ico jpeg gif; do
+        SYSTEM_ICON_DEST="$HOME/.local/share/icons/muffin-$APP_NAME.$ext"
+        if [ -f "$SYSTEM_ICON_DEST" ]; then
+            rm -f "$SYSTEM_ICON_DEST"
+            echo "  - Removed application icon (.$ext)."
+            deleted_any=true
+        fi
+    done
 
     # Remove extracted application runtime cache files
     if [ -d "$APP_DIR" ]; then
@@ -187,20 +184,32 @@ else
 fi
 
 # 2. Handle Icon and Desktop Shortcut
-ICON_FILE="$APP_DIR/icon.png"
-SYSTEM_ICON_DEST="$HOME/.local/share/icons/muffin-$APP_NAME.png"
+# Look for standard icon.png, fallback to any file starting with 'favicon.' (any extension)
+ICON_PATH=""
+if [ -f "$APP_DIR/icon.png" ]; then
+    ICON_PATH="$APP_DIR/icon.png"
+else
+    # Locate any file starting with 'favicon.' in the root extracted folder (case-insensitive)
+    FAVICON_PATH=$(find "$APP_DIR" -maxdepth 2 -iname "favicon.*" | head -n 1)
+    if [ -n "$FAVICON_PATH" ]; then
+        ICON_PATH="$FAVICON_PATH"
+    fi
+fi
+
 DESKTOP_FILE="$HOME/.local/share/applications/muffin-$APP_NAME.desktop"
 
 # Check if shortcut exists, if not, create it
 if [ ! -f "$DESKTOP_FILE" ]; then
     echo "Adding $APP_NAME to system applications menu..."
     
-    # Process icon
-    if [ -f "$ICON_FILE" ]; then
-        cp "$ICON_FILE" "$SYSTEM_ICON_DEST"
+    # Process icon setup dynamically supporting any source extension
+    if [ -n "$ICON_PATH" ]; then
+        ICON_EXT="${ICON_PATH##*.}"
+        SYSTEM_ICON_DEST="$HOME/.local/share/icons/muffin-$APP_NAME.$ICON_EXT"
+        cp "$ICON_PATH" "$SYSTEM_ICON_DEST"
         ICON_LINE="Icon=$SYSTEM_ICON_DEST"
     else
-        echo "Warning: icon.png not found in archive. Using default system icon."
+        echo "Warning: Neither icon.png nor favicon file was found in archive. Using default system icon."
         ICON_LINE="Icon=application-x-executable"
     fi
 
