@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# Copyright (c) 2026 Gatlin Nicholson
+#
+# This software is released under the MIT License.
+# https://opensource.org
+
 # Muffin Maker - Download websites and package them into .mpa files
 # Usage: muffin-make.bash <URL> [custom-app-name]
 
