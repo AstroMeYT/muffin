@@ -97,3 +97,5 @@ If you compress your app's directory directly, **Muffin will automatically flatt
 Contributions are welcome! Feel free to open issues or submit pull requests to make Muffin even better.
 
 Enjoy your lightweight portable web apps! 🧁
+
+Copyright (c) 2026 Gatlin Nicholson
