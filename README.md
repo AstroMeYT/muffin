@@ -27,13 +27,8 @@ Instead of bundling a massive browser engine with every single app like Electron
 Simply clone this repository and run the installer script. It will copy the binaries into your local `~/bin` directory and help you set up your system path if needed.
 
 ```bash
-# Clone the repository
-git clone https://github.com/AstroMeYT/muffin
-cd muffin
-
-# Make the installer executable and run it
-chmod +x install.sh
-./install.sh
+# Install with one command for all systems besides Arch
+curl -fsSL https://raw.githubusercontent.com/AstroMeYT/muffin/refs/heads/main/install-full.sh | sh
 
 ```
 
