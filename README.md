@@ -24,7 +24,7 @@ Simply clone this repository and run the installer script. It will copy the bina
 
 ```bash
 # Clone the repository
-git clone [https://github.com/yourusername/muffin.git](https://github.com/yourusername/muffin.git)
+git clone https://github.com/AstroMeYT/muffin
 cd muffin
 
 # Make the installer executable and run it
