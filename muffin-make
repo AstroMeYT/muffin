@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+
+# Muffin Maker - Download websites and package them into .mpa files
+# Usage: muffin-make.bash <URL> [custom-app-name]
+
+die() {
+    echo "Error: $1" >&2
+    exit 1
+}
+
+# 1. Ensure essential tools are present
+command -v wget >/dev/null 2>&1 || die "wget is required to download websites. Please install it."
+command -v zip >/dev/null 2>&1 || die "zip is required to package archives. Please install it."
+
+# Verify arguments
+if [ -z "$1" ]; then
+    echo "Muffin Portable Archive (.mpa) Packager"
+    echo "Usage: muffin-make.bash <URL> [custom-app-name]"
+    exit 1
+fi
+
+URL="$1"
+# Clean up URL format if scheme is missing
+if [[ "$URL" != http://* ]] && [[ "$URL" != https://* ]]; then
+    URL="https://$URL"
+fi
+
+# Extract domain for fallback app name
+DOMAIN=$(echo "$URL" | awk -F[/:] '{print $4}')
+[ -z "$DOMAIN" ] && DOMAIN="web_app"
+
+# Setup Application Name (stripping bad chars)
+RAW_NAME="${2:-$DOMAIN}"
+APP_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g' | tr '[:upper:]' '[:lower:]')
+
+# Setup paths
+MUFFIN_LIB="$HOME/.local/share/muffin/library"
+mkdir -p "$MUFFIN_LIB"
+
+# Temporary directory for building the app assets
+BUILD_DIR=$(mktemp -d -t muffin-build-XXXXXX)
+# Ensure build folder gets scrubbed when script finishes
+cleanup() {
+    rm -rf "$BUILD_DIR"
+}
+trap cleanup EXIT
+
+echo "=========================================="
+echo "Creating Muffin App: $APP_NAME"
+echo "Target URL: $URL"
+echo "Build Directory: $BUILD_DIR"
+echo "=========================================="
+
+# 2. Mirror/download the website directory 
+echo "Downloading website assets... (This might take a moment)"
+wget \
+    --recursive \
+    --level=2 \
+    --page-requisites \
+    --adjust-extension \
+    --convert-links \
+    --no-parent \
+    --no-host-directories \
+    --directory-prefix="$BUILD_DIR" \
+    --quiet \
+    --show-progress \
+    "$URL" || echo "Warning: Download returned non-zero, but attempting to package anyway..."
+
+# 3. Locate the entry-point index file and normalize it to root index.html
+# Look for index.html, index.php, or fallback to the primary entrypoint
+FOUND_ENTRY=$(find "$BUILD_DIR" -type f -name "*.html" | head -n 1)
+
+if [ -z "$FOUND_ENTRY" ]; then
+    die "Failed to download any HTML entrypoint. Check your URL or internet connection."
+fi
+
+# If the entrypoint isn't named index.html at root, normalize it
+if [ "$FOUND_ENTRY" != "$BUILD_DIR/index.html" ]; then
+    echo "Normalizing main HTML file to index.html..."
+    mv "$FOUND_ENTRY" "$BUILD_DIR/index.html"
+fi
+
+# 4. Attempt to grab the website favicon and set it as icon.png
+echo "Fetching favicon..."
+# Determine base URL for favicon query
+BASE_URL=$(echo "$URL" | grep -oP '^https?://[^/]+')
+FAVICON_URL="$BASE_URL/favicon.ico"
+
+wget -q -O "$BUILD_DIR/favicon.ico" "$FAVICON_URL"
+
+if [ -f "$BUILD_DIR/favicon.ico" ] && [ -s "$BUILD_DIR/favicon.ico" ]; then
+    # Convert .ico to .png if ImageMagick is available on the system
+    if command -v convert >/dev/null 2>&1; then
+        echo "Converting favicon to icon.png..."
+        convert "$BUILD_DIR/favicon.ico[0]" "$BUILD_DIR/icon.png" 2>/dev/null
+        rm -f "$BUILD_DIR/favicon.ico"
+    else
+        # If no ImageMagick, check if we can download an alternative png or leave as is
+        echo "ImageMagick ('convert') not found. Keeping icon as favicon.ico."
+        mv "$BUILD_DIR/favicon.ico" "$BUILD_DIR/icon.png" 2>/dev/null
+    fi
+else
+    # Fallback default icon notice (Muffin will use system fallback if icon.png is missing)
+    echo "Could not fetch custom favicon. Using fallback icon design."
+fi
+
+# 5. Pack everything up into an .mpa in our shared Library!
+echo "Generating .mpa package..."
+OUTPUT_FILE="$MUFFIN_LIB/${APP_NAME}.mpa"
+
+# Remove existing version if we are overwriting
+rm -f "$OUTPUT_FILE"
+
+# Change directory into the build directory to avoid archiving directory structures
+cd "$BUILD_DIR" || die "Failed to enter build directory."
+zip -q -r "$OUTPUT_FILE" ./*
+
+echo "=========================================="
+echo "SUCCESS: App created!"
+echo "Package Saved: $OUTPUT_FILE"
+echo "=========================================="
+echo "You can now launch your portable app instantly using:"
+echo "  muffin run $APP_NAME"
+echo "=========================================="
