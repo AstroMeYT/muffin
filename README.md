@@ -30,3 +30,89 @@ cd muffin
 # Make the installer executable and run it
 chmod +x install.sh
 ./install.sh
+
+```
+
+*Note: If the installer asks to append `~/bin` to your system PATH, type `y` (or Enter) to complete the setup.*
+
+## 🚀 How to Use
+
+### 1. Build an App (`muffin-make`)
+
+You can turn any live website **or** local project folder into an offline desktop application using the `muffin-make` utility. This utility automatically gathers the files, assigns an icon, packages the `.mpa` file, and adds it directly to your launcher library.
+
+**Option A: Package from a URL**
+
+```bash
+# Usage: muffin-make url <URL> [custom-app-name]
+muffin-make url [https://rawg.io](https://rawg.io) rawg-games
+
+```
+
+**Option B: Package from a Local Folder**
+
+```bash
+# Usage: muffin-make folder <path/to/folder> [custom-app-name]
+muffin-make folder ~/Projects/calculator my-calculator
+
+```
+
+### 2. Run a Muffin Application (`muffin`)
+
+To run a portable app, you can pass its clean name (if it's in your local library) or point it directly to a downloaded `.mpa` file path.
+
+```bash
+# Run an app installed in your local library
+muffin run rawg-games
+
+# Run a standalone .mpa file from anywhere
+muffin run ~/Downloads/calculator.mpa
+
+```
+
+### 3. Uninstall/Delete an Application
+
+To cleanly remove an application from your desktop launcher, delete its icon caches, and wipe it from your library:
+
+```bash
+muffin delete rawg-games
+
+```
+
+## 🛠️ The `.mpa` File Architecture
+
+A `.mpa` (Muffin Portable Archive) is literally just a `.zip` archive renamed to `.mpa`.
+
+For Muffin to parse and run your custom application correctly, ensure your archive contains at least an `index.html` at its core:
+
+```text
+your-app.mpa (ZIP Archive)
+├── index.html       <-- The main application entrypoint (required)
+├── icon.png         <-- Application menu icon (optional, recommended)
+├── styles.css       <-- Local stylesheet
+├── app.js           <-- Local JavaScript functionality
+└── assets/          <-- Local images, fonts, or media assets
+
+```
+
+If you compress your app's directory directly, **Muffin will automatically flatten nested directory structures** on extraction to make sure your app still launches flawlessly!
+
+## ⚖️ Muffin vs. Electron / Tauri
+
+| **Feature** | **Muffin 🧁** | **Electron ⚛️** | **Tauri 🦀** |
+| --- | --- | --- | --- |
+| **Average App Size** | **~10 KB - 5 MB** | ~120 MB+ | ~5 MB - 15 MB |
+| **Memory Footprint** | **Minimal** (Shared Webkit) | Massive (Dedicated Chromium) | Medium (Dedicated Webview) |
+| **Packaging File** | `.mpa` (Simple Zip) | Platform-specific installer | Platform-specific binary |
+| **Compilation Required** | **No** (Zero compile-time) | Yes (Long compile-time) | Yes (Requires Rust toolchain) |
+| **OS Integration** | Automatic `.desktop` shortcuts | Manual installation process | Manual installation process |
+
+## 🤝 Contributing
+
+Contributions are welcome! Feel free to open issues or submit pull requests to make Muffin even better.
+
+Enjoy your lightweight portable web apps! 🧁
+
+```
+
+```
