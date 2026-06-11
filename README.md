@@ -117,6 +117,7 @@ Contributions are welcome! Feel free to open issues or submit pull requests to m
 
 Enjoy your lightweight portable web apps! 🧁
 
-```
+## ⏰ Future Ideas
 
-```
+- Windows-based MPA executer (it is possible!)
+
