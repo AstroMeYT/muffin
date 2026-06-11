@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2026 Gatlin Nicholson
-#
-# This software is released under the MIT License.
-# https://opensource.org
-
 # Muffin - Portable Web App Runner & Installer
 # Usage: 
 #   muffin run <path/to/app.mpa_or_app_name>
@@ -120,7 +115,6 @@ if [ "$COMMAND" = "delete" ]; then
     fi
 
     if [ "$deleted_any" = true ]; then
-        # Force GNOME/KDE/XFCE to reload the applications menu cache immediately
         if command -v update-desktop-database >/dev/null 2>&1; then
             update-desktop-database "$HOME/.local/share/applications"
         fi
@@ -132,14 +126,10 @@ if [ "$COMMAND" = "delete" ]; then
 fi
 
 # --- RUN COMMAND LOGIC ---
-
-# Only run dependency checks when executing an application
 check_dependencies
 
 MPA_FILE=""
 
-# Resolve Application Path
-# Check if the input is a direct file path, otherwise look inside the Muffin Library
 if [ -f "$INPUT_ARG" ]; then
     MPA_FILE="$INPUT_ARG"
 elif [ -f "$MUFFIN_LIB/$INPUT_ARG" ]; then
@@ -150,12 +140,10 @@ else
     die "Could not find application '$INPUT_ARG' locally or in your library ($MUFFIN_LIB)."
 fi
 
-# Convert to absolute path so the .desktop file always works
 if [[ "$MPA_FILE" != /* ]]; then
     MPA_FILE="$(pwd)/$MPA_FILE"
 fi
 
-# Setup Muffin base directories
 MUFFIN_DIR="$HOME/.local/share/muffin"
 APP_DIR="$MUFFIN_DIR/apps/$APP_NAME"
 PYTHON_RUNNER="$MUFFIN_DIR/runner.py"
@@ -164,37 +152,28 @@ mkdir -p "$APP_DIR"
 mkdir -p "$HOME/.local/share/icons"
 mkdir -p "$HOME/.local/share/applications"
 
-# 1. Extract the .mpa archive
 echo "Loading $APP_NAME..."
-# Clear out the old directory to avoid mixed files if updating
 rm -rf "$APP_DIR"/*
-# Unzip silently, overwriting files (-o) in case the .mpa was updated
 unzip -q -o "$MPA_FILE" -d "$APP_DIR" || die "Failed to extract $MPA_FILE. Is it a valid zip archive?"
 
-# Handle nested archive directory structures (if zipped folder directly instead of folder contents)
 INDEX_PATH=$(find "$APP_DIR" -maxdepth 3 -name "index.html" | head -n 1)
 if [ -n "$INDEX_PATH" ]; then
     INDEX_DIR=$(dirname "$INDEX_PATH")
     if [ "$INDEX_DIR" != "$APP_DIR" ]; then
         echo "Normalizing nested directory structure..."
-        # Safely move everything up a level
         shopt -s dotglob
         mv "$INDEX_DIR"/* "$APP_DIR/" 2>/dev/null
         shopt -u dotglob
-        # Clean up any empty directory leftovers
         find "$APP_DIR" -mindepth 1 -type d -empty -delete
     fi
 else
     die "Invalid Muffin App: index.html is missing anywhere in the archive."
 fi
 
-# 2. Handle Icon and Desktop Shortcut
-# Look for standard icon.png, fallback to any file starting with 'favicon.' (any extension)
 ICON_PATH=""
 if [ -f "$APP_DIR/icon.png" ]; then
     ICON_PATH="$APP_DIR/icon.png"
 else
-    # Locate any file starting with 'favicon.' in the root extracted folder (case-insensitive)
     FAVICON_PATH=$(find "$APP_DIR" -maxdepth 2 -iname "favicon.*" | head -n 1)
     if [ -n "$FAVICON_PATH" ]; then
         ICON_PATH="$FAVICON_PATH"
@@ -203,11 +182,9 @@ fi
 
 DESKTOP_FILE="$HOME/.local/share/applications/muffin-$APP_NAME.desktop"
 
-# Check if shortcut exists, if not, create it
 if [ ! -f "$DESKTOP_FILE" ]; then
     echo "Adding $APP_NAME to system applications menu..."
     
-    # Process icon setup dynamically supporting any source extension
     if [ -n "$ICON_PATH" ]; then
         ICON_EXT="${ICON_PATH##*.}"
         SYSTEM_ICON_DEST="$HOME/.local/share/icons/muffin-$APP_NAME.$ICON_EXT"
@@ -218,14 +195,11 @@ if [ ! -f "$DESKTOP_FILE" ]; then
         ICON_LINE="Icon=application-x-executable"
     fi
 
-    # Find where the muffin command actually lives to put in the Exec line
     MUFFIN_BIN=$(command -v muffin)
     if [ -z "$MUFFIN_BIN" ]; then
-        # Fallback if muffin isn't in PATH yet
         MUFFIN_BIN="$HOME/bin/muffin" 
     fi
 
-    # Generate .desktop file
     cat <<EOF > "$DESKTOP_FILE"
 [Desktop Entry]
 Type=Application
@@ -239,13 +213,12 @@ EOF
     
     chmod +x "$DESKTOP_FILE"
     
-    # Update desktop database so the menu refreshes immediately
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database "$HOME/.local/share/applications"
     fi
 fi
 
-# 3. Create or update the Python Webview Runner (always overwrite to ensure latest features/bugfixes run)
+# 3. Create or update Python Webview Runner (With explicit WASM & CORS support overrides)
 cat << 'EOF' > "$PYTHON_RUNNER"
 #!/usr/bin/env python3
 import sys
@@ -254,7 +227,6 @@ import os
 try:
     import gi
     gi.require_version('Gtk', '3.0')
-    # Try WebKit2 version 4.1 first (newer Linux), fallback to 4.0
     try:
         gi.require_version('WebKit2', '4.1')
     except ValueError:
@@ -274,11 +246,8 @@ app_title = sys.argv[1]
 app_url = sys.argv[2]
 
 def apply_system_theme():
-    """Detects system color scheme and applies dark theme styling to GTK window if enabled."""
     try:
         settings = Gtk.Settings.get_default()
-        
-        # 1. Attempt to check the GNOME/FreeDesktop portal color-scheme
         try:
             gsettings = Gio.Settings.new("org.gnome.desktop.interface")
             color_scheme = gsettings.get_string("color-scheme")
@@ -288,7 +257,6 @@ def apply_system_theme():
         except Exception:
             pass
 
-        # 2. Fallback to checking active GTK theme name
         try:
             theme_name = settings.get_property("gtk-theme-name")
             if "dark" in theme_name.lower():
@@ -303,11 +271,17 @@ class MuffinWindow(Gtk.Window):
     def __init__(self):
         Gtk.Window.__init__(self, title=app_title)
         self.set_default_size(1024, 768)
-        
-        # Position in center of screen
         self.set_position(Gtk.WindowPosition.CENTER)
 
-        self.webview = WebKit2.WebView()
+        # Explicitly configure WebKit engine to enable local file execution and loading (Crucial for WASM)
+        settings = WebKit2.Settings()
+        settings.set_enable_javascript(True)
+        settings.set_enable_webgl(True)  # Many WASM apps require hardware acceleration/WebGL
+        settings.set_allow_file_access_from_file_urls(True)        # Allows asset inclusion via local paths
+        settings.set_allow_universal_access_from_file_urls(True)   # Bypasses local CORS blocks on .wasm files
+
+        # Initialize WebView with custom settings override
+        self.webview = WebKit2.WebView.new_with_settings(settings)
         self.webview.load_uri(app_url)
         
         self.add(self.webview)
