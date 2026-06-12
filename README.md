@@ -7,6 +7,6 @@ This allows the execution of pre-built MPA files on MacOS, with Python being the
 You can copy the file and execute it:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/AstroMeYT/muffin/refs/heads/main/install-full.sh && chmod +x muffin && muffin
+curl -fsSL https://raw.githubusercontent.com/AstroMeYT/muffin/refs/heads/macOS/muffin && chmod +x muffin && muffin
 
 ```
