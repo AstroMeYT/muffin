@@ -28,12 +28,37 @@ echo.
 :: 1. Verify basic dependency (Python is required for Muffin's Webview Engine)
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Python was not found in your system PATH.
+    echo [WARN] Python was not found in your system PATH.
     echo Muffin requires Python 3+ to drive the Microsoft Edge WebView2 engine.
-    echo Please install Python (and check the 'Add Python to PATH' option) and try again.
     echo.
-    pause
-    exit /b 1
+    
+    :: Prompt the user to install Python automatically
+    set /p "PY_CHOICE=Would you like the installer to download and configure Python for you now? (Y/N): "
+    
+    if /I "!PY_CHOICE!"=="Y" (
+        echo.
+        echo [INFO] Downloading and preparing official Python setup runtime...
+        
+        :: Standard Python executable installer endpoint utilized to properly digest /quiet, InstallAllUsers, and PrependPath
+        curl -L "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" --output "%TMP%\py_install.exe" && "%TMP%\py_install.exe" /quiet InstallAllUsers=1 PrependPath=1
+        
+        if !errorlevel! neq 0 (
+            echo.
+            echo [ERROR] Automated Python installation failed or was rejected.
+            echo Please install Python manually from https://www.python.org and try again.
+            pause
+            exit /b 1
+        )
+        echo [SUCCESS] Python setup execution completed successfully.
+        echo.
+        echo [INFO] Pausing briefly for background path propagation...
+        timeout /t 5 /nobreak >nul
+    ) else (
+        echo.
+        echo [ERROR] Installation aborted. Python is a mandatory dependency for Muffin.
+        pause
+        exit /b 1
+    )
 )
 
 :: 2. Set Up Target Installation Path
