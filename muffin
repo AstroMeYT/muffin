@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+
+# Muffin - Portable Web App Runner (macOS Edition)
+# Usage:
+#   muffin run <path/to/app.mpa_or_app_name>
+#   muffin delete <path/to/app.mpa_or_app_name>
+
+# Standardize Muffin directories to macOS specifications
+MUFFIN_DIR="$HOME/Library/Application Support/muffin"
+MUFFIN_LIB="$MUFFIN_DIR/library"
+MUFFIN_APPS="$MUFFIN_DIR/apps"
+MUFFIN_DATA="$MUFFIN_DIR/data"
+PYTHON_RUNNER="$MUFFIN_DIR/runner.py"
+MAC_APPS_DIR="$HOME/Applications"
+
+# Function to display errors and exit
+die() {
+    echo "Error: $1" >&2
+    exit 1
+}
+
+# 1. Ensure target directories exist
+mkdir -p "$MUFFIN_LIB" "$MUFFIN_APPS" "$MUFFIN_DATA" "$MAC_APPS_DIR"
+
+ensure_mime_association() {
+    local muffin_self
+    muffin_self=$(readlink -f "$0" 2>/dev/null || echo "$PWD/$0")
+    local master_app="$MAC_APPS_DIR/Muffin.app"
+    
+    if [ ! -d "$master_app" ]; then
+        echo "Configuring .mpa macOS file associations..."
+        
+        mkdir -p "$master_app/Contents/MacOS"
+        mkdir -p "$master_app/Contents/Resources"
+        
+        # Create the launch script for the master app
+        cat <<EOF > "$master_app/Contents/MacOS/Muffin"
+#!/usr/bin/env bash
+# macOS passes double-clicked files as arguments to the app binary
+if [ -n "\$1" ]; then
+    "$muffin_self" run "\$1"
+else
+    echo "Muffin Runtime Engine. Open a .mpa file to launch."
+fi
+EOF
+        chmod +x "$master_app/Contents/MacOS/Muffin"
+        
+        # Create Info.plist registering the .mpa file type
+        cat <<EOF > "$master_app/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Muffin</string>
+    <key>CFBundleExecutable</key>
+    <string>Muffin</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.muffin.runner</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array><string>mpa</string></array>
+            <key>CFBundleTypeName</key>
+            <string>Muffin Portable Archive</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+        </dict>
+    </array>
+</dict>
+</plist>
+EOF
+        # Refresh Launch Services to recognize the new file association
+        /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -f "$master_app"
+        echo "File association complete. Double-click any .mpa to launch."
+    fi
+}
+
+check_dependencies() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        die "Python3 is not installed. macOS usually includes it via Xcode command line tools. Please run 'xcode-select --install' or install via Homebrew."
+    fi
+    ensure_mime_association
+}
+
+# Verify arguments
+if { [ "$1" != "run" ] && [ "$1" != "delete" ]; } || [ -z "$2" ]; then
+    echo "Muffin Portable Archive Launcher & Manager (macOS)"
+    echo "Usage:"
+    echo "  muffin run <path/to/app.mpa_or_app_name>"
+    echo "  muffin delete <path/to/app.mpa_or_app_name>"
+    exit 1
+fi
+
+COMMAND="$1"
+INPUT_ARG="$2"
+
+# Extract the clean application name
+APP_NAME=$(basename "$INPUT_ARG" .mpa)
+
+# --- DELETE COMMAND LOGIC ---
+if [ "$COMMAND" = "delete" ]; then
+    echo "Uninstalling Muffin App: $APP_NAME"
+    
+    APP_BUNDLE="$MAC_APPS_DIR/$APP_NAME.app"
+    APP_DIR="$MUFFIN_APPS/$APP_NAME"
+    DATA_DIR="$MUFFIN_DATA/$APP_NAME"
+    LIBRARY_MPA="$MUFFIN_LIB/${APP_NAME}.mpa"
+    
+    deleted_any=false
+
+    if [ -d "$APP_BUNDLE" ]; then
+        rm -rf "$APP_BUNDLE"
+        echo "  - Removed application from Launchpad / Applications folder."
+        deleted_any=true
+    fi
+    if [ -d "$APP_DIR" ]; then
+        rm -rf "$APP_DIR"
+        echo "  - Cleaned extracted application files."
+        deleted_any=true
+    fi
+    if [ -d "$DATA_DIR" ]; then
+        rm -rf "$DATA_DIR"
+        echo "  - Cleaned persistent session data."
+        deleted_any=true
+    fi
+    if [ -f "$LIBRARY_MPA" ]; then
+        rm -f "$LIBRARY_MPA"
+        echo "  - Deleted package from Muffin library."
+        deleted_any=true
+    fi
+
+    if [ "$deleted_any" = true ]; then
+        echo "Successfully deleted '$APP_NAME'."
+    else
+        echo "No installed components found for app '$APP_NAME'."
+    fi
+    exit 0
+fi
+
+# --- RUN COMMAND LOGIC ---
+check_dependencies
+
+MPA_FILE=""
+if [ -f "$INPUT_ARG" ]; then MPA_FILE="$INPUT_ARG"
+elif [ -f "$MUFFIN_LIB/$INPUT_ARG" ]; then MPA_FILE="$MUFFIN_LIB/$INPUT_ARG"
+elif [ -f "$MUFFIN_LIB/${INPUT_ARG}.mpa" ]; then MPA_FILE="$MUFFIN_LIB/${INPUT_ARG}.mpa"
+else die "Could not find application '$INPUT_ARG' locally or in your library."; fi
+
+# Resolve to absolute path
+if [[ "$MPA_FILE" != /* ]]; then MPA_FILE="$(pwd)/$MPA_FILE"; fi
+
+APP_DIR="$MUFFIN_APPS/$APP_NAME"
+APP_DATA_DIR="$MUFFIN_DATA/$APP_NAME"
+mkdir -p "$APP_DATA_DIR"
+
+echo "Loading $APP_NAME..."
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR"
+
+unzip -q -o "$MPA_FILE" -d "$APP_DIR" || die "Failed to extract $MPA_FILE."
+
+# Route Target URL (Live App vs Local App)
+TARGET_URL=""
+if [ -f "$APP_DIR/live.txt" ]; then
+    TARGET_URL=$(cat "$APP_DIR/live.txt" | tr -d '\r\n')
+    echo "Live App Detected: Routing to $TARGET_URL"
+else
+    INDEX_PATH=$(find "$APP_DIR" -maxdepth 3 -name "index.html" | head -n 1)
+    if [ -n "$INDEX_PATH" ]; then
+        INDEX_DIR=$(dirname "$INDEX_PATH")
+        if [ "$INDEX_DIR" != "$APP_DIR" ]; then
+            shopt -s dotglob; mv "$INDEX_DIR"/* "$APP_DIR/" 2>/dev/null; shopt -u dotglob
+            find "$APP_DIR" -mindepth 1 -type d -empty -delete
+        fi
+        TARGET_URL="file://$APP_DIR/index.html"
+    else
+        die "Invalid Muffin App: Missing live.txt or index.html in the archive."
+    fi
+fi
+
+ICON_PATH=""
+ICNS_PATH="$APP_DIR/icon.icns"
+if [ -f "$APP_DIR/icon.png" ]; then ICON_PATH="$APP_DIR/icon.png"
+else
+    FAVICON_PATH=$(find "$APP_DIR" -maxdepth 2 -iname "favicon.*" | head -n 1)
+    if [ -n "$FAVICON_PATH" ]; then ICON_PATH="$FAVICON_PATH"; fi
+fi
+
+# Convert PNG to ICNS if needed using native macOS sips & iconutil
+if [ -n "$ICON_PATH" ] && [ ! -f "$ICNS_PATH" ]; then
+    echo "Converting icon for macOS Dock..."
+    ICONSET_DIR=$(mktemp -d)/AppIcon.iconset
+    mkdir -p "$ICONSET_DIR"
+    sips -z 128 128   "$ICON_PATH" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null 2>&1
+    sips -z 256 256   "$ICON_PATH" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null 2>&1
+    sips -z 512 512   "$ICON_PATH" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null 2>&1
+    iconutil -c icns "$ICONSET_DIR" -o "$ICNS_PATH" >/dev/null 2>&1
+    rm -rf "$ICONSET_DIR"
+fi
+
+# Generate macOS Application Bundle
+APP_BUNDLE="$MAC_APPS_DIR/$APP_NAME.app"
+if [ ! -d "$APP_BUNDLE" ]; then
+    echo "Adding $APP_NAME to Launchpad..."
+    mkdir -p "$APP_BUNDLE/Contents/MacOS"
+    mkdir -p "$APP_BUNDLE/Contents/Resources"
+    
+    if [ -f "$ICNS_PATH" ]; then
+        cp "$ICNS_PATH" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+        ICON_KEY="<key>CFBundleIconFile</key><string>AppIcon.icns</string>"
+    else
+        ICON_KEY=""
+    fi
+    
+    # Generate Info.plist for the app
+    cat <<EOF > "$APP_BUNDLE/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleExecutable</key>
+    <string>launch.sh</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.muffin.app.$APP_NAME</string>
+    $ICON_KEY
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+    # Generate the launch script inside the App Bundle
+    muffin_self=$(readlink -f "$0" 2>/dev/null || echo "$PWD/$0")
+    cat <<EOF > "$APP_BUNDLE/Contents/MacOS/launch.sh"
+#!/usr/bin/env bash
+"$muffin_self" run "$MPA_FILE"
+EOF
+    chmod +x "$APP_BUNDLE/Contents/MacOS/launch.sh"
+fi
+
+# Create Python WebView Runner
+cat << 'EOF' > "$PYTHON_RUNNER"
+#!/usr/bin/env python3
+import sys
+import os
+import subprocess
+
+try:
+    import webview
+except ImportError:
+    print("First-time setup: Installing macOS pywebview bindings...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pywebview[cocoa]"])
+    import webview
+
+app_title = sys.argv[1]
+app_url = sys.argv[2]
+data_dir = sys.argv[3]
+
+# On macOS, pywebview maps to WKWebView natively. 
+# Caches/Cookies isolate per process automatically.
+window = webview.create_window(app_title, app_url, width=1280, height=800)
+webview.start(private_mode=False)
+EOF
+chmod +x "$PYTHON_RUNNER"
+
+echo "Launching $APP_NAME..."
+exec python3 "$PYTHON_RUNNER" "$APP_NAME" "$TARGET_URL" "$APP_DATA_DIR"
