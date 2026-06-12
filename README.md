@@ -16,7 +16,7 @@ Instead of bundling a massive browser engine with every single app like Electron
 
 * 🌓 **Dynamic System Theming:** The Webview frame automatically detects and respects your system-wide dark or light mode preferences (supports GNOME, KDE, etc.).
 
-* 🌐 **Muffin Maker (`muffin-make`):** Quickly scrape and package any online web application, **or package local HTML/JS projects**, into an offline portable desktop app.
+* 🌐 **Muffin Maker (`muffin-make`):** Quickly scrape and package any online web application, **or package local HTML/JS projects**, into an offline portable desktop app. Now has support for Live Apps, which are apps that run an online website.
 
 * 🗑️ **Clean Uninstallation:** Built-in `delete` utility to fully wipe shortcuts, cached files, icons, and library `.mpa` files.
 
@@ -56,6 +56,14 @@ muffin-make folder ~/Projects/calculator my-calculator
 
 ```
 
+**Option C: Package a Live App**
+
+```bash
+# Usage: muffin-make live <path/to/folder> <path/to/icon.png> [custom-app-name]
+muffin-make folder ~/Projects/calculator ~/Projects/calculator/icon.png my-calculator
+
+```
+
 ### 2. Run a Muffin Application (`muffin`)
 
 To run a portable app, you can pass its clean name (if it's in your local library) or point it directly to a downloaded `.mpa` file path.
@@ -91,6 +99,13 @@ your-app.mpa (ZIP Archive)
 ├── styles.css       <-- Local stylesheet
 ├── app.js           <-- Local JavaScript functionality
 └── assets/          <-- Local images, fonts, or media assets
+
+```
+
+```text
+your-app.mpa (ZIP Archive) LIVE APP
+├── live.txt         <-- The main application entrypoint, containing the website link (required)
+└── icon.png         <-- Local image for the app, since the website isn't scraped
 
 ```
 
