@@ -20,11 +20,6 @@ BIN_DIR="$HOME/.local/bin"
 OLD_BIN_DIR="$HOME/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
 
-# URLs for the files
-MUFFIN_URL="https://raw.githubusercontent.com/AstroMeYT/muffin/refs/heads/main/muffin"
-MUFFIN_MAKE_URL="https://raw.githubusercontent.com/AstroMeYT/muffin/refs/heads/main/muffin-make"
-MUFFIN_GUI_URL="https://raw.githubusercontent.com/AstroMeYT/muffin/refs/heads/main/muffin-gui"
-
 # 1. Ensure target directories exist
 if [ ! -d "$BIN_DIR" ]; then
     echo -e "${YELLOW}Creating local binary directory at $BIN_DIR...${NC}"
@@ -38,12 +33,35 @@ fi
 # Determine downloader
 if command -v curl >/dev/null 2>&1; then
     DOWNLOADER="curl -fsSL -o"
+    DOWNLOAD_STDOUT="curl -fsSL"
 elif command -v wget >/dev/null 2>&1; then
     DOWNLOADER="wget -qO"
+    DOWNLOAD_STDOUT="wget -qO -"
 else
     echo -e "${RED}Error: Neither 'curl' nor 'wget' is installed. Please install one of them to proceed.${NC}"
     exit 1
 fi
+
+# 2. Check GitHub API for the latest release version
+echo -e "\n${BLUE}Checking for latest release...${NC}"
+LATEST_API_RESPONSE=$($DOWNLOAD_STDOUT https://api.github.com/repos/AstroMeYT/muffin/releases/latest 2>/dev/null)
+
+if command -v grep >/dev/null && command -v sed >/dev/null; then
+    LATEST_TAG=$(echo "$LATEST_API_RESPONSE" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+fi
+
+if [ -n "$LATEST_TAG" ]; then
+    echo -e "${GREEN}✓ Found latest release: ${BOLD}$LATEST_TAG${NC}"
+    BRANCH_PATH="refs/tags/$LATEST_TAG"
+else
+    echo -e "${YELLOW}⚠️ Could not determine latest release. Falling back to 'main' branch.${NC}"
+    BRANCH_PATH="refs/heads/main"
+fi
+
+# URLs for the files using dynamic branch/tag pathing
+MUFFIN_URL="https://raw.githubusercontent.com/AstroMeYT/muffin/$BRANCH_PATH/muffin"
+MUFFIN_MAKE_URL="https://raw.githubusercontent.com/AstroMeYT/muffin/$BRANCH_PATH/muffin-make"
+MUFFIN_GUI_URL="https://raw.githubusercontent.com/AstroMeYT/muffin/$BRANCH_PATH/muffin-gui"
 
 # Check if Muffin is already installed
 if [ -f "$BIN_DIR/muffin" ] || [ -f "$BIN_DIR/muffin-make" ] || [ -f "$OLD_BIN_DIR/muffin" ]; then
@@ -114,7 +132,7 @@ if [ -f "$BIN_DIR/muffin" ] || [ -f "$BIN_DIR/muffin-make" ] || [ -f "$OLD_BIN_D
     esac
 fi
 
-# 2. Download files directly to bin directory
+# 3. Download files directly to bin directory
 echo -e "\n${BLUE}Downloading files from GitHub...${NC}"
 
 echo -n "  Downloading muffin... "
@@ -144,7 +162,7 @@ else
     exit 1
 fi
 
-# 3. Create desktop entry for GUI
+# 4. Create desktop entry for GUI
 echo -n "  Creating desktop entry... "
 cat <<EOF > "$DESKTOP_DIR/org.muffin.GUI.desktop"
 [Desktop Entry]
@@ -164,7 +182,7 @@ fi
 echo -e "${GREEN}✓${NC}"
 
 
-# 4. Check if ~/.local/bin is in user's $PATH
+# 5. Check if ~/.local/bin is in user's $PATH
 path_configured=false
 if [[ ":$PATH:" == *":$BIN_DIR:"* ]]; then
     path_configured=true
