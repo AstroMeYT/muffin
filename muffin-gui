@@ -35,6 +35,7 @@ class MuffinGUI(Adw.ApplicationWindow):
         menu_model = Gio.Menu()
         menu_model.append("Create from URL", "app.create_url")
         menu_model.append("Create from Folder", "app.create_folder")
+        menu_model.append("Create Live App", "app.create_live")
         menu_model.append("Import Local .mpa File", "app.import_file")
         
         menu_btn = Gtk.MenuButton()
@@ -50,6 +51,10 @@ class MuffinGUI(Adw.ApplicationWindow):
         action_folder = Gio.SimpleAction.new("create_folder", None)
         action_folder.connect("activate", self.on_make_folder_clicked)
         app.add_action(action_folder)
+
+        action_live = Gio.SimpleAction.new("create_live", None)
+        action_live.connect("activate", self.on_make_live_clicked)
+        app.add_action(action_live)
         
         action_import = Gio.SimpleAction.new("import_file", None)
         action_import.connect("activate", self.on_import_clicked)
@@ -228,6 +233,59 @@ class MuffinGUI(Adw.ApplicationWindow):
             if name:
                 cmd.append(name)
             self.run_command_async(cmd, "App created successfully!")
+
+    def on_make_live_clicked(self, action, param):
+        dialog = Adw.MessageDialog(heading="Create Live App", transient_for=self)
+        dialog.set_body("Live apps serve as a fast desktop wrapper for live websites and require a custom desktop icon.")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("next", "Select Icon...")
+        dialog.set_response_appearance("next", Adw.ResponseAppearance.SUGGESTED)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        url_entry = Gtk.Entry(placeholder_text="https://discord.com/app")
+        name_entry = Gtk.Entry(placeholder_text="App Name (optional)")
+        box.append(url_entry)
+        box.append(name_entry)
+        dialog.set_extra_child(box)
+        
+        def handle_response(d, r):
+            d.close()
+            if r == "next":
+                url = url_entry.get_text()
+                name = name_entry.get_text()
+                if not url:
+                    self.show_message("Error", "URL is required to build a Live App.")
+                    return
+                self.select_live_app_icon(url, name)
+                
+        dialog.connect("response", handle_response)
+        dialog.present()
+
+    def select_live_app_icon(self, url, name):
+        dialog = Gtk.FileDialog(title="Select Icon for Live App")
+        f_filter = Gtk.FileFilter()
+        f_filter.set_name("Images")
+        f_filter.add_mime_type("image/png")
+        f_filter.add_mime_type("image/jpeg")
+        f_filter.add_mime_type("image/svg+xml")
+        
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(f_filter)
+        dialog.set_filters(filters)
+        
+        def on_icon_selected(d, result):
+            try:
+                file = d.open_finish(result)
+                if file:
+                    icon_path = file.get_path()
+                    cmd = [self.get_script_path("muffin-make"), "live", url, icon_path]
+                    if name:
+                        cmd.append(name)
+                    self.run_command_async(cmd, "Live App created successfully!")
+            except GLib.Error:
+                pass
+                
+        dialog.open(self, None, on_icon_selected)
             
     def on_make_folder_clicked(self, action, param):
         dialog = Gtk.FileDialog(title="Select Folder")
