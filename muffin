@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # Muffin - Portable Web App Runner & Installer
-# Usage: 
-#   muffin run <path/to/app.mpa_or_app_name>
-#   muffin delete <path/to/app.mpa_or_app_name>
+
+# Ensure background GUI executions have a complete PATH
+export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 # Function to display errors and exit
 die() {
@@ -30,31 +30,88 @@ install_dependencies() {
     fi
 }
 
+ensure_mime_association() {
+    local muffin_self
+    muffin_self=$(readlink -f "$0")
+    local muffin_self_dir
+    muffin_self_dir=$(dirname "$muffin_self")
+
+    local mime_package_file="$HOME/.local/share/mime/packages/muffin.xml"
+    local muffin_desktop="$HOME/.local/share/applications/muffin.desktop"
+    local mime_icon="$HOME/.local/share/icons/application-x-muffin-portable-archive.png"
+
+    if [ ! -f "$mime_package_file" ] || [ ! -f "$muffin_desktop" ] || ! grep -q "Exec=\"$muffin_self\"" "$muffin_desktop" 2>/dev/null; then
+        echo "Configuring .mpa system file associations..."
+
+        mkdir -p "$HOME/.local/share/mime/packages"
+        cat <<EOF > "$mime_package_file"
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-muffin-portable-archive">
+    <comment>Muffin Portable Archive</comment>
+    <glob pattern="*.mpa"/>
+    <icon name="application-x-muffin-portable-archive"/>
+  </mime-type>
+</mime-info>
+EOF
+
+        mkdir -p "$HOME/.local/share/icons"
+        if [ -f "$muffin_self_dir/icon.png" ]; then
+            cp "$muffin_self_dir/icon.png" "$mime_icon"
+            mkdir -p "$HOME/.local/share/icons/hicolor/48x48/mimetypes"
+            cp "$muffin_self_dir/icon.png" "$HOME/.local/share/icons/hicolor/48x48/mimetypes/application-x-muffin-portable-archive.png"
+            mkdir -p "$HOME/.local/share/icons/hicolor/256x256/mimetypes"
+            cp "$muffin_self_dir/icon.png" "$HOME/.local/share/icons/hicolor/256x256/mimetypes/application-x-muffin-portable-archive.png"
+        fi
+
+        mkdir -p "$HOME/.local/share/applications"
+        cat <<EOF > "$muffin_desktop"
+[Desktop Entry]
+Type=Application
+Name=Muffin Runner
+Exec="$muffin_self" run %f
+Icon=application-x-muffin-portable-archive
+Terminal=false
+NoDisplay=true
+MimeType=application/x-muffin-portable-archive;
+EOF
+        chmod +x "$muffin_desktop"
+
+        if command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$HOME/.local/share/mime"; fi
+        if command -v xdg-mime >/dev/null 2>&1; then xdg-mime default muffin.desktop application/x-muffin-portable-archive; fi
+        if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$HOME/.local/share/applications"; fi
+    fi
+}
+
 check_dependencies() {
     local missing=0
 
-    # Check for base binaries
     if ! command -v unzip >/dev/null 2>&1; then missing=1; fi
     if ! command -v python3 >/dev/null 2>&1; then missing=1; fi
     
-    # Check for specific python bindings without failing the script yet
     if [ $missing -eq 0 ]; then
-        if ! python3 -c "import gi" 2>/dev/null; then
-            missing=1
+        if ! python3 -c "import gi" 2>/dev/null; then missing=1
         elif ! (python3 -c "import gi; gi.require_version('WebKit2', '4.1')" 2>/dev/null || python3 -c "import gi; gi.require_version('WebKit2', '4.0')" 2>/dev/null); then
             missing=1
         fi
     fi
 
     if [ $missing -eq 1 ]; then
-        echo "Missing required system dependencies. Attempting auto-install..."
-        install_dependencies
+        # Prevent background GUI launches from silently hanging on a 'sudo' terminal prompt
+        if [ ! -t 1 ]; then
+            command -v zenity >/dev/null 2>&1 && zenity --error --text="Muffin is missing system dependencies.\nPlease run 'muffin' directly in your terminal to install them."
+            die "Missing dependencies. Run in terminal to auto-install."
+        else
+            echo "Missing required system dependencies. Attempting auto-install..."
+            install_dependencies
+        fi
         
-        # Final sanity check after install
         if ! command -v unzip >/dev/null 2>&1 || ! python3 -c "import gi" 2>/dev/null; then
             die "Auto-install failed. Please install dependencies manually."
         fi
     fi
+
+    ensure_mime_association
 }
 
 # Verify arguments
@@ -69,8 +126,6 @@ fi
 COMMAND="$1"
 INPUT_ARG="$2"
 MUFFIN_LIB="$HOME/.local/share/muffin/library"
-
-# Extract the clean application name (stripping paths and extensions)
 APP_NAME=$(basename "$INPUT_ARG" .mpa)
 
 # --- DELETE COMMAND LOGIC ---
@@ -79,45 +134,26 @@ if [ "$COMMAND" = "delete" ]; then
     
     DESKTOP_FILE="$HOME/.local/share/applications/muffin-$APP_NAME.desktop"
     APP_DIR="$HOME/.local/share/muffin/apps/$APP_NAME"
+    DATA_DIR="$HOME/.local/share/muffin/data/$APP_NAME"
+    CACHE_DIR="$HOME/.cache/muffin/$APP_NAME"
     LIBRARY_MPA="$MUFFIN_LIB/${APP_NAME}.mpa"
     
     deleted_any=false
 
-    # Remove the system shortcut
-    if [ -f "$DESKTOP_FILE" ]; then
-        rm -f "$DESKTOP_FILE"
-        echo "  - Removed application menu shortcut."
-        deleted_any=true
-    fi
-
-    # Remove any registered system menu icons matching this app (handles various extensions)
+    if [ -f "$DESKTOP_FILE" ]; then rm -f "$DESKTOP_FILE"; deleted_any=true; fi
     for ext in png svg ico jpeg gif; do
-        SYSTEM_ICON_DEST="$HOME/.local/share/icons/muffin-$APP_NAME.$ext"
-        if [ -f "$SYSTEM_ICON_DEST" ]; then
-            rm -f "$SYSTEM_ICON_DEST"
-            echo "  - Removed application icon (.$ext)."
+        if [ -f "$HOME/.local/share/icons/muffin-$APP_NAME.$ext" ]; then
+            rm -f "$HOME/.local/share/icons/muffin-$APP_NAME.$ext"
             deleted_any=true
         fi
     done
-
-    # Remove extracted application runtime cache files
-    if [ -d "$APP_DIR" ]; then
-        rm -rf "$APP_DIR"
-        echo "  - Cleaned extracted application files."
-        deleted_any=true
-    fi
-
-    # Remove the .mpa package ONLY if it resides in Muffin's default library directory
-    if [ -f "$LIBRARY_MPA" ]; then
-        rm -f "$LIBRARY_MPA"
-        echo "  - Deleted package from Muffin library ($LIBRARY_MPA)."
-        deleted_any=true
-    fi
+    if [ -d "$APP_DIR" ]; then rm -rf "$APP_DIR"; deleted_any=true; fi
+    if [ -d "$DATA_DIR" ]; then rm -rf "$DATA_DIR"; echo "  - Cleaned persistent session data."; deleted_any=true; fi
+    if [ -d "$CACHE_DIR" ]; then rm -rf "$CACHE_DIR"; deleted_any=true; fi
+    if [ -f "$LIBRARY_MPA" ]; then rm -f "$LIBRARY_MPA"; deleted_any=true; fi
 
     if [ "$deleted_any" = true ]; then
-        if command -v update-desktop-database >/dev/null 2>&1; then
-            update-desktop-database "$HOME/.local/share/applications"
-        fi
+        if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$HOME/.local/share/applications"; fi
         echo "Successfully deleted '$APP_NAME'."
     else
         echo "No installed components found for app '$APP_NAME'."
@@ -129,96 +165,77 @@ fi
 check_dependencies
 
 MPA_FILE=""
+if [ -f "$INPUT_ARG" ]; then MPA_FILE="$INPUT_ARG"
+elif [ -f "$MUFFIN_LIB/$INPUT_ARG" ]; then MPA_FILE="$MUFFIN_LIB/$INPUT_ARG"
+elif [ -f "$MUFFIN_LIB/${INPUT_ARG}.mpa" ]; then MPA_FILE="$MUFFIN_LIB/${INPUT_ARG}.mpa"
+else die "Could not find application '$INPUT_ARG' locally or in your library ($MUFFIN_LIB)."; fi
 
-if [ -f "$INPUT_ARG" ]; then
-    MPA_FILE="$INPUT_ARG"
-elif [ -f "$MUFFIN_LIB/$INPUT_ARG" ]; then
-    MPA_FILE="$MUFFIN_LIB/$INPUT_ARG"
-elif [ -f "$MUFFIN_LIB/${INPUT_ARG}.mpa" ]; then
-    MPA_FILE="$MUFFIN_LIB/${INPUT_ARG}.mpa"
-else
-    die "Could not find application '$INPUT_ARG' locally or in your library ($MUFFIN_LIB)."
-fi
-
-if [[ "$MPA_FILE" != /* ]]; then
-    MPA_FILE="$(pwd)/$MPA_FILE"
-fi
+if [[ "$MPA_FILE" != /* ]]; then MPA_FILE="$(pwd)/$MPA_FILE"; fi
 
 MUFFIN_DIR="$HOME/.local/share/muffin"
 APP_DIR="$MUFFIN_DIR/apps/$APP_NAME"
 PYTHON_RUNNER="$MUFFIN_DIR/runner.py"
 
-mkdir -p "$APP_DIR"
-mkdir -p "$HOME/.local/share/icons"
-mkdir -p "$HOME/.local/share/applications"
+mkdir -p "$APP_DIR" "$HOME/.local/share/icons" "$HOME/.local/share/applications"
 
 echo "Loading $APP_NAME..."
 rm -rf "$APP_DIR"/*
 unzip -q -o "$MPA_FILE" -d "$APP_DIR" || die "Failed to extract $MPA_FILE. Is it a valid zip archive?"
 
-INDEX_PATH=$(find "$APP_DIR" -maxdepth 3 -name "index.html" | head -n 1)
-if [ -n "$INDEX_PATH" ]; then
-    INDEX_DIR=$(dirname "$INDEX_PATH")
-    if [ "$INDEX_DIR" != "$APP_DIR" ]; then
-        echo "Normalizing nested directory structure..."
-        shopt -s dotglob
-        mv "$INDEX_DIR"/* "$APP_DIR/" 2>/dev/null
-        shopt -u dotglob
-        find "$APP_DIR" -mindepth 1 -type d -empty -delete
-    fi
+# Route Target URL (Live App vs Local App)
+TARGET_URL=""
+if [ -f "$APP_DIR/live.txt" ]; then
+    TARGET_URL=$(cat "$APP_DIR/live.txt" | tr -d '\r\n')
+    echo "Live App Detected: Routing to $TARGET_URL"
 else
-    die "Invalid Muffin App: index.html is missing anywhere in the archive."
+    INDEX_PATH=$(find "$APP_DIR" -maxdepth 3 -name "index.html" | head -n 1)
+    if [ -n "$INDEX_PATH" ]; then
+        INDEX_DIR=$(dirname "$INDEX_PATH")
+        if [ "$INDEX_DIR" != "$APP_DIR" ]; then
+            shopt -s dotglob; mv "$INDEX_DIR"/* "$APP_DIR/" 2>/dev/null; shopt -u dotglob
+            find "$APP_DIR" -mindepth 1 -type d -empty -delete
+        fi
+        TARGET_URL="file://$APP_DIR/index.html"
+    else
+        die "Invalid App: Missing live.txt or index.html."
+    fi
 fi
 
 ICON_PATH=""
-if [ -f "$APP_DIR/icon.png" ]; then
-    ICON_PATH="$APP_DIR/icon.png"
+if [ -f "$APP_DIR/icon.png" ]; then ICON_PATH="$APP_DIR/icon.png"
 else
     FAVICON_PATH=$(find "$APP_DIR" -maxdepth 2 -iname "favicon.*" | head -n 1)
-    if [ -n "$FAVICON_PATH" ]; then
-        ICON_PATH="$FAVICON_PATH"
-    fi
+    if [ -n "$FAVICON_PATH" ]; then ICON_PATH="$FAVICON_PATH"; fi
 fi
 
 DESKTOP_FILE="$HOME/.local/share/applications/muffin-$APP_NAME.desktop"
-
 if [ ! -f "$DESKTOP_FILE" ]; then
-    echo "Adding $APP_NAME to system applications menu..."
-    
     if [ -n "$ICON_PATH" ]; then
         ICON_EXT="${ICON_PATH##*.}"
         SYSTEM_ICON_DEST="$HOME/.local/share/icons/muffin-$APP_NAME.$ICON_EXT"
         cp "$ICON_PATH" "$SYSTEM_ICON_DEST"
         ICON_LINE="Icon=$SYSTEM_ICON_DEST"
     else
-        echo "Warning: Neither icon.png nor favicon file was found in archive. Using default system icon."
         ICON_LINE="Icon=application-x-executable"
     fi
-
-    MUFFIN_BIN=$(command -v muffin)
-    if [ -z "$MUFFIN_BIN" ]; then
-        MUFFIN_BIN="$HOME/bin/muffin" 
-    fi
-
+    
+    # Guarantee absolute execution path for background menu launches
+    MUFFIN_BIN=$(readlink -f "$0")
+    
     cat <<EOF > "$DESKTOP_FILE"
 [Desktop Entry]
 Type=Application
 Name=$APP_NAME
-Exec=$MUFFIN_BIN run "$MPA_FILE"
+Exec="$MUFFIN_BIN" run "$MPA_FILE"
 $ICON_LINE
 Terminal=false
-Categories=Utility;
-Comment=Muffin Portable App
+Categories=Network;Utility;
 EOF
-    
     chmod +x "$DESKTOP_FILE"
-    
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "$HOME/.local/share/applications"
-    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$HOME/.local/share/applications"; fi
 fi
 
-# 3. Create or update Python Webview Runner (With explicit WASM & CORS support overrides)
+# 3. Create Webview Runner (With Persistent Sessions & Hardware Permissions)
 cat << 'EOF' > "$PYTHON_RUNNER"
 #!/usr/bin/env python3
 import sys
@@ -227,63 +244,69 @@ import os
 try:
     import gi
     gi.require_version('Gtk', '3.0')
-    try:
-        gi.require_version('WebKit2', '4.1')
-    except ValueError:
-        gi.require_version('WebKit2', '4.0')
-        
+    try: gi.require_version('WebKit2', '4.1')
+    except ValueError: gi.require_version('WebKit2', '4.0')
     from gi.repository import Gtk, WebKit2, Gio
-except ImportError:
-    print("Error: Missing Python GTK/WebKit2 dependencies.")
-    print("Please ensure python3-gi and gir1.2-webkit2-4.0 (or 4.1) are installed.")
-    sys.exit(1)
-
-if len(sys.argv) < 3:
-    print("Usage: runner.py <Title> <URL>")
+except ImportError as e:
+    print(f"Error: Missing Python GTK/WebKit2 dependencies. Details: {e}")
     sys.exit(1)
 
 app_title = sys.argv[1]
 app_url = sys.argv[2]
+app_name_safe = app_title.replace(" ", "_").lower()
 
 def apply_system_theme():
     try:
         settings = Gtk.Settings.get_default()
-        try:
-            gsettings = Gio.Settings.new("org.gnome.desktop.interface")
-            color_scheme = gsettings.get_string("color-scheme")
-            if "dark" in color_scheme.lower():
-                settings.set_property("gtk-application-prefer-dark-theme", True)
-                return
-        except Exception:
-            pass
-
-        try:
-            theme_name = settings.get_property("gtk-theme-name")
-            if "dark" in theme_name.lower():
-                settings.set_property("gtk-application-prefer-dark-theme", True)
-                return
-        except Exception:
-            pass
-    except Exception:
-        pass
+        if "dark" in Gio.Settings.new("org.gnome.desktop.interface").get_string("color-scheme").lower() or \
+           "dark" in settings.get_property("gtk-theme-name").lower():
+            settings.set_property("gtk-application-prefer-dark-theme", True)
+    except Exception: pass
 
 class MuffinWindow(Gtk.Window):
     def __init__(self):
         Gtk.Window.__init__(self, title=app_title)
-        self.set_default_size(1024, 768)
+        self.set_default_size(1280, 800)
         self.set_position(Gtk.WindowPosition.CENTER)
 
-        # Explicitly configure WebKit engine to enable local file execution and loading (Crucial for WASM)
-        settings = WebKit2.Settings()
-        settings.set_enable_javascript(True)
-        settings.set_enable_webgl(True)  # Many WASM apps require hardware acceleration/WebGL
-        settings.set_allow_file_access_from_file_urls(True)        # Allows asset inclusion via local paths
-        settings.set_allow_universal_access_from_file_urls(True)   # Bypasses local CORS blocks on .wasm files
+        # 1. Establish Persistent Session Directories
+        data_dir = os.path.expanduser(f"~/.local/share/muffin/data/{app_name_safe}")
+        cache_dir = os.path.expanduser(f"~/.cache/muffin/{app_name_safe}")
+        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(cache_dir, exist_ok=True)
 
-        # Initialize WebView with custom settings override
-        self.webview = WebKit2.WebView.new_with_settings(settings)
-        self.webview.load_uri(app_url)
+        data_manager = WebKit2.WebsiteDataManager(
+            base_data_directory=data_dir,
+            base_cache_directory=cache_dir
+        )
+        web_context = WebKit2.WebContext(website_data_manager=data_manager)
+
+        # 2. Configure Chrome Spoofing & Engine Settings
+        settings = WebKit2.Settings()
+        settings.set_user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
+        props = {
+            "enable-javascript": True,
+            "enable-webgl": True,
+            "enable-developer-extras": True,
+            "allow-file-access-from-file-urls": True,
+            "allow-universal-access-from-file-urls": True,
+            "enable-mediasource": True
+        }
+        for prop, value in props.items():
+            try: settings.set_property(prop, value)
+            except Exception: pass
+
+        self.webview = WebKit2.WebView(web_context=web_context, settings=settings)
+
+        # 3. Handle Hardware Permissions (Mic, Camera, Notifications)
+        def on_permission_request(view, request):
+            request.allow()
+            return True
+        
+        self.webview.connect("permission-request", on_permission_request)
+
+        self.webview.load_uri(app_url)
         self.add(self.webview)
         self.connect("destroy", Gtk.main_quit)
         self.show_all()
@@ -295,6 +318,7 @@ if __name__ == "__main__":
 EOF
 chmod +x "$PYTHON_RUNNER"
 
-# 4. Launch the application
-TARGET_URL="file://$APP_DIR/index.html"
-exec "$PYTHON_RUNNER" "$APP_NAME" "$TARGET_URL"
+# 4. Launch the application (Now generating a runtime log for background GUI execution debugging)
+LOG_FILE="$HOME/.cache/muffin/${APP_NAME}_runtime.log"
+echo "Launching $APP_NAME... (Logging to $LOG_FILE)"
+exec "$PYTHON_RUNNER" "$APP_NAME" "$TARGET_URL" >> "$LOG_FILE" 2>&1

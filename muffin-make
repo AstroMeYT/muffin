@@ -1,59 +1,86 @@
 #!/usr/bin/env bash
 
-# Muffin Maker - Package websites or local folders into .mpa files
-# Usage: muffin-make <url|folder> <source> [custom-app-name]
+# Muffin Maker - Package websites, local folders, or live apps into .mpa files
+# Usage: muffin-make <url|folder|live> <source> [custom-app-name]
 
 die() {
     echo "Error: $1" >&2
     exit 1
 }
 
-# Verify arguments
-if [ $# -lt 2 ]; then
+# 1. Ensure essential tools are present
+command -v zip >/dev/null 2>&1 || die "zip is required to package archives. Please install it."
+
+# Verify arguments & show help menu
+if [ -z "$1" ] || { [ -z "$2" ] && [[ "$1" != http* ]]; }; then
     echo "Muffin Portable Archive (.mpa) Packager"
-    echo "Usage: muffin-make <url|folder> <source> [custom-app-name]"
+    echo "Usage:"
+    echo "  muffin-make url <URL> [custom-app-name]"
+    echo "  muffin-make folder <path/to/folder> [custom-app-name]"
+    echo "  muffin-make live <URL> <path/to/icon.png> [custom-app-name]"
     echo ""
-    echo "Examples:"
-    echo "  muffin-make url https://rawg.io rawg-games"
-    echo "  muffin-make folder /path/to/my/website local-app"
+    echo "Legacy Usage:"
+    echo "  muffin-make <URL> [custom-app-name]   (Defaults to 'url')"
     exit 1
 fi
 
 MODE="$1"
-SOURCE="$2"
-RAW_NAME="$3"
 
-# 1. Ensure essential tools are present
-command -v zip >/dev/null 2>&1 || die "zip is required to package archives. Please install it."
-
-if [ "$MODE" = "url" ]; then
-    command -v wget >/dev/null 2>&1 || die "wget is required to download websites. Please install it."
+# Handle legacy invocations and parse arguments gracefully
+if [ "$MODE" = "--live" ] || [ "$MODE" = "live" ]; then
+    MODE="live"
+    SOURCE="$2"
+    ICON_PATH="$3"
+    RAW_NAME="$4"
+    
+    if [ -z "$SOURCE" ] || [ -z "$ICON_PATH" ]; then
+        die "Live apps require an icon path. Usage: muffin-make live <URL> <path/to/icon.png> [custom-app-name]"
+    fi
+    if [ ! -f "$ICON_PATH" ]; then
+        die "Icon file not found: $ICON_PATH"
+    fi
+elif [ "$MODE" = "url" ]; then
+    SOURCE="$2"
+    RAW_NAME="$3"
+    if [ -z "$SOURCE" ]; then
+        die "URL mode requires a URL. Usage: muffin-make url <URL> [custom-app-name]"
+    fi
+elif [ "$MODE" = "folder" ]; then
+    SOURCE="$2"
+    RAW_NAME="$3"
+    if [ -z "$SOURCE" ]; then
+        die "Folder mode requires a directory path. Usage: muffin-make folder <path/to/folder> [custom-app-name]"
+    fi
+else
+    # If it's not a recognized mode keyword, assume it's a direct URL
+    MODE="url"
+    SOURCE="$1"
+    RAW_NAME="$2"
 fi
 
-# 2. Parse source and determine app name
-if [ "$MODE" = "url" ]; then
+if [ "$MODE" = "url" ] || [ "$MODE" = "live" ]; then
+    if [ "$MODE" = "url" ]; then
+        command -v wget >/dev/null 2>&1 || die "wget is required for downloading URLs. Please install it."
+    fi
     URL="$SOURCE"
     # Clean up URL format if scheme is missing
-    if [[ "$URL" != http://* ]] && [[ "$URL" != https://* ]]; then
+    if [[ "$URL" != http* ]] && [[ "$URL" != https* ]]; then
         URL="https://$URL"
     fi
-    # Extract domain for fallback app name
     DOMAIN=$(echo "$URL" | awk -F[/:] '{print $4}')
     [ -z "$DOMAIN" ] && DOMAIN="web_app"
     [ -z "$RAW_NAME" ] && RAW_NAME="$DOMAIN"
-    
 elif [ "$MODE" = "folder" ]; then
     if [ ! -d "$SOURCE" ]; then
         die "Directory not found: $SOURCE"
     fi
-    # Fallback to the name of the folder if no custom name is provided
     [ -z "$RAW_NAME" ] && RAW_NAME=$(basename "$(realpath "$SOURCE")")
 else
-    die "Invalid mode: $MODE. Must be 'url' or 'folder'."
+    die "Invalid mode: $MODE"
 fi
 
-# Setup Application Name (stripping bad chars)
-APP_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g' | tr '[:upper:]' '[:lower:]')
+# Setup Application Name (stripping bad chars but preserving capitals)
+APP_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g')
 
 # Setup paths
 MUFFIN_LIB="$HOME/.local/share/muffin/library"
@@ -61,7 +88,6 @@ mkdir -p "$MUFFIN_LIB"
 
 # Temporary directory for building the app assets
 BUILD_DIR=$(mktemp -d -t muffin-build-XXXXXX)
-# Ensure build folder gets scrubbed when script finishes
 cleanup() {
     rm -rf "$BUILD_DIR"
 }
@@ -74,8 +100,13 @@ echo "Source: $SOURCE"
 echo "Build Directory: $BUILD_DIR"
 echo "=========================================="
 
-# 3. Gather assets based on mode
-if [ "$MODE" = "url" ]; then
+# 2. Process App Content based on mode
+if [ "$MODE" = "live" ]; then
+    echo "Generating Live App configuration..."
+    echo "$URL" > "$BUILD_DIR/live.txt"
+    echo "Copying provided icon..."
+    cp "$ICON_PATH" "$BUILD_DIR/icon.png"
+elif [ "$MODE" = "url" ]; then
     echo "Downloading website assets... (This might take a moment)"
     wget \
         --recursive \
@@ -89,67 +120,65 @@ if [ "$MODE" = "url" ]; then
         --quiet \
         --show-progress \
         "$URL" || echo "Warning: Download returned non-zero, but attempting to package anyway..."
-else
+
+    FOUND_ENTRY=$(find "$BUILD_DIR" -type f -name "*.html" | head -n 1)
+    if [ -z "$FOUND_ENTRY" ]; then
+        die "Failed to download any HTML entrypoint. Check your URL or internet connection."
+    fi
+    if [ "$FOUND_ENTRY" != "$BUILD_DIR/index.html" ]; then
+        echo "Normalizing main HTML file to index.html..."
+        mv "$FOUND_ENTRY" "$BUILD_DIR/index.html"
+    fi
+elif [ "$MODE" = "folder" ]; then
     echo "Copying local directory assets..."
     cp -r "$SOURCE"/* "$BUILD_DIR/" 2>/dev/null || cp -r "$SOURCE/." "$BUILD_DIR/"
-fi
-
-# 4. Locate the entry-point index file and normalize it to root index.html
-FOUND_ENTRY=$(find "$BUILD_DIR" -type f -name "*.html" | head -n 1)
-
-if [ -z "$FOUND_ENTRY" ]; then
-    die "Failed to find any HTML entrypoint in the source."
-fi
-
-# If the entrypoint isn't named index.html at root, normalize it
-if [ "$FOUND_ENTRY" != "$BUILD_DIR/index.html" ]; then
-    echo "Normalizing main HTML file to index.html..."
-    mv "$FOUND_ENTRY" "$BUILD_DIR/index.html"
-fi
-
-# 5. Handle Favicon Resolution (WITHOUT relying on parsing HTML files)
-echo "Searching for favicon in assets..."
-# First, look inside the gathered files for any file named favicon.*
-LOCAL_FAVICON=$(find "$BUILD_DIR" -maxdepth 3 -iname "favicon.*" | head -n 1)
-
-# If building from URL and no local favicon found, try fetching from root domain
-if [ -z "$LOCAL_FAVICON" ] && [ "$MODE" = "url" ]; then
-    echo "No favicon discovered in downloaded assets. Fetching from common web root paths..."
-    BASE_URL=$(echo "$URL" | grep -oP '^https?://[^/]+')
     
-    # Intelligently query common direct extensions
-    for ext in ico png svg; do
-        echo "Trying $BASE_URL/favicon.$ext..."
-        wget -q -O "$BUILD_DIR/favicon.$ext" "$BASE_URL/favicon.$ext"
-        if [ -f "$BUILD_DIR/favicon.$ext" ] && [ -s "$BUILD_DIR/favicon.$ext" ]; then
-            LOCAL_FAVICON="$BUILD_DIR/favicon.$ext"
-            break
-        else
-            rm -f "$BUILD_DIR/favicon.$ext" # Clean up empty/failed attempts
-        fi
-    done
-fi
-
-if [ -n "$LOCAL_FAVICON" ]; then
-    echo "Found favicon: $(basename "$LOCAL_FAVICON")"
-    
-    # Optional enhancement: Convert high-res ico structure to png if ImageMagick is active
-    if [[ "$LOCAL_FAVICON" == *.ico ]] && command -v convert >/dev/null 2>&1; then
-        echo "Converting .ico structure to icon.png for optimal system render compatibility..."
-        convert "$LOCAL_FAVICON[0]" "$BUILD_DIR/icon.png" 2>/dev/null
+    FOUND_ENTRY=$(find "$BUILD_DIR" -type f -name "*.html" | head -n 1)
+    if [ -z "$FOUND_ENTRY" ]; then
+        die "Failed to find any HTML entrypoint in the source."
     fi
-else
-    echo "Could not find any favicon. Muffin will default to its core fallback icon."
+    if [ "$FOUND_ENTRY" != "$BUILD_DIR/index.html" ]; then
+        echo "Normalizing main HTML file to index.html..."
+        mv "$FOUND_ENTRY" "$BUILD_DIR/index.html"
+    fi
 fi
 
-# 6. Pack everything up into an .mpa in our shared Library!
+# 3. Attempt to grab the website favicon and set it as icon.png
+if [ "$MODE" = "live" ]; then
+    echo "Icon already configured for live app. Skipping web fetch."
+elif [ "$MODE" = "folder" ] && { [ -f "$BUILD_DIR/icon.png" ] || [ -n "$(find "$BUILD_DIR" -maxdepth 2 -iname "favicon.*" | head -n 1)" ]; }; then
+    echo "Local icon or favicon found. Skipping web fetch."
+else
+    echo "Fetching favicon..."
+    if [ "$MODE" = "folder" ]; then
+        echo "No local icon found. Muffin will use default system icon."
+    else
+        BASE_URL=$(echo "$URL" | grep -oP '^https?://[^/]+')
+        FAVICON_URL="$BASE_URL/favicon.ico"
+        
+        wget -q -O "$BUILD_DIR/favicon.ico" "$FAVICON_URL"
+
+        if [ -f "$BUILD_DIR/favicon.ico" ] && [ -s "$BUILD_DIR/favicon.ico" ]; then
+            if command -v convert >/dev/null 2>&1; then
+                echo "Converting favicon to icon.png..."
+                convert "$BUILD_DIR/favicon.ico[0]" "$BUILD_DIR/icon.png" 2>/dev/null
+                rm -f "$BUILD_DIR/favicon.ico"
+            else
+                echo "ImageMagick ('convert') not found. Keeping icon as favicon.ico."
+                mv "$BUILD_DIR/favicon.ico" "$BUILD_DIR/icon.png" 2>/dev/null
+            fi
+        else
+            echo "Could not fetch custom favicon. Using fallback icon design."
+        fi
+    fi
+fi
+
+# 4. Pack everything up into an .mpa in our shared Library!
 echo "Generating .mpa package..."
 OUTPUT_FILE="$MUFFIN_LIB/${APP_NAME}.mpa"
 
-# Remove existing version if we are overwriting
 rm -f "$OUTPUT_FILE"
 
-# Change directory into the build directory to avoid archiving directory structures
 cd "$BUILD_DIR" || die "Failed to enter build directory."
 zip -q -r "$OUTPUT_FILE" ./*
 
